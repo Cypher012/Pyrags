@@ -1,0 +1,32 @@
+services:
+  api-db:
+    image: postgres:17-alpine
+    restart: always
+    ports:
+      - "5433:5432"   # 5433 on host so it doesn't clash with the auth DB on 5432
+    environment:
+      POSTGRES_USER: cipher
+      POSTGRES_PASSWORD: ${API_DB_PASSWORD}
+      POSTGRES_DB: pyrags
+    volumes:
+      - api_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U cipher -d pyrags"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  api:
+    build: .
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql+asyncpg://cipher:${API_DB_PASSWORD}@api-db:5432/pyrags
+    depends_on:
+      api-db:
+        condition: service_healthy
+
+volumes:
+  api_pgdata:
