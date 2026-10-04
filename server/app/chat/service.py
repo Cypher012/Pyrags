@@ -1,160 +1,196 @@
+import asyncio
 from collections.abc import AsyncGenerator
-from typing import cast
+from uuid import UUID
 
-from langchain_classic.chains import (
-    create_history_aware_retriever,
-    create_retrieval_chain,
-)
+from langchain_core.language_models import BaseChatModel
+from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
-from langchain_core.runnables import Runnable
+from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.chat.model import ChatModelConfig, ModelProvider
+from app.chat.model import ChatModelConfig
 from app.chat.model_factory import ModelFactory
-from app.chat.prompts import SYSTEM_PROMPT
+from app.chat.prompts import HISTORY_PROMPT, SYSTEM_PROMPT
 from app.chat.schemas import (
+    ChatRequest,
     ChatServiceRequest,
     ChatServiceResponse,
     ChatStreamChunk,
-    RagChainChunk,
-    RagChainRequest,
-    RagChainResponse,
+    ChatStreamComplete,
 )
-from app.embeddings.documents import SourceDocument
-from app.embeddings.service import create_pinecone_index
-
-# LangChain's LCEL retrieval chain uses mappings internally. The application
-# boundary is kept typed with RagChainRequest/RagChainResponse below.
-RagChain = Runnable[dict[str, object], dict[str, object]]
-
-_rag_chain_cache: dict[str, RagChain] = {}
+from app.embeddings.documents import DocumentMetadata, SourceDocument
+from app.embeddings.service import generate_query_embedding
+from app.model.message import Message
+from app.repository.document_chunk import RetrievedChunk, search_document_chunks
 
 
-def _make_cache_key(
-    model_provider: ModelProvider,
-    model_options: ChatModelConfig | None,
-) -> str:
-    """Build a stable cache key from the provider and validated options."""
+def _to_langchain_message(messages: list[Message]) -> list[BaseMessage]:
+    """Convert persisted chat messages into LangChain messages."""
 
-    options = model_options or ChatModelConfig()
-    return f"{model_provider}:{options.model_dump_json()}"
+    chat_history: list[BaseMessage] = []
+
+    for message in messages:
+        match message.role:
+            case "user":
+                chat_history.append(HumanMessage(content=message.content))
+            case "assistant":
+                chat_history.append(AIMessage(content=message.content))
+            case _:
+                chat_history.append(SystemMessage(content=message.content))
+
+    return chat_history
+
+
+def create_chat_service_request(
+    chat_request: ChatRequest,
+    messages: list[Message],
+) -> ChatServiceRequest:
+    """Build the request consumed by the RAG service."""
+    return ChatServiceRequest(
+        message=chat_request.message,
+        chat_history=_to_langchain_message(messages),
+        model_provider=chat_request.model_provider,
+        model_options=chat_request.model_options,
+    )
 
 
 def create_chat_prompt() -> ChatPromptTemplate:
     """Prompt used to generate the final answer."""
-
     return ChatPromptTemplate.from_messages(
         [
             ("system", SYSTEM_PROMPT),
             MessagesPlaceholder(variable_name="chat_history"),
-            ("human", "Context:\n{context}\n\nQuestion:\n{input}"),
+            ("human", "Context: \n{context}\n\nQuestion: \n{input}"),
         ]
     )
 
 
-def create_history_aware_prompt() -> ChatPromptTemplate:
-    """Prompt used to turn a follow-up question into a standalone question."""
+def _build_context(chunks: list[RetrievedChunk]) -> str:
+    """Convert retrieved database chunks into a prompt context."""
 
-    return ChatPromptTemplate.from_messages(
-        [
-            ("system", SYSTEM_PROMPT),
-            MessagesPlaceholder(variable_name="chat_history"),
-            ("human", "Question: {input}"),
-        ]
+    return "\n\n".join(
+        (
+            f"[Source: {document.file_name}"
+            f"{f', page {chunk.page_number}' if chunk.page_number else ''}]\n"
+            f"{chunk.content}"
+        )
+        for chunk, document in chunks
     )
 
 
-def _build_rag_chain(
-    model_provider: ModelProvider,
-    model_options: ChatModelConfig,
-) -> RagChain:
-    """Build the mapping-based LangChain RAG pipeline."""
+def _build_source_documents(chunks: list[RetrievedChunk]) -> list[SourceDocument]:
+    """Convert database chunks into API citation models."""
 
-    vector_store = create_pinecone_index()
-    retriever = vector_store.as_retriever(
-        search_type="similarity",
-        search_kwargs={"k": 5},
+    return [
+        SourceDocument(
+            content=chunk.content,
+            metadata=DocumentMetadata(
+                file_name=document.file_name,
+                file_type=document.file_type,
+                page_number=chunk.page_number,
+                chunk_index=chunk.chunk_index,
+            ),
+        )
+        for chunk, document in chunks
+    ]
+
+
+async def _retrieve_chunks(
+    session: AsyncSession,
+    conversation_id: UUID,
+    request: ChatServiceRequest,
+    model: BaseChatModel,
+) -> list[RetrievedChunk]:
+    search_query = request.message
+    if request.chat_history:
+        prompt = ChatPromptTemplate.from_messages(
+            [
+                ("system", HISTORY_PROMPT),
+                MessagesPlaceholder(variable_name="chat_history"),
+                ("human", "{input}"),
+            ]
+        )
+        rewritten_query = await (prompt | model | StrOutputParser()).ainvoke(
+            {"input": request.message, "chat_history": request.chat_history}
+        )
+        search_query = rewritten_query.strip() or request.message
+
+    query_embedding = await asyncio.to_thread(generate_query_embedding, search_query)
+    return await search_document_chunks(
+        session, conversation_id, query_embedding, limit=5
     )
+
+
+async def query_bot(
+    session: AsyncSession,
+    conversation_id: UUID,
+    request: ChatServiceRequest,
+) -> ChatServiceResponse:
+    """Run a non-streaming RAG query using pgvector retrieval."""
+
+    model_options = request.model_options or ChatModelConfig()
 
     model = ModelFactory().get_chat_model(
-        provider=model_provider,
+        provider=request.model_provider,
         model_options=model_options,
     )
 
-    history_aware_retriever = create_history_aware_retriever(
-        model,
-        retriever,
-        create_history_aware_prompt(),
+    chunks = await _retrieve_chunks(session, conversation_id, request, model)
+    context = _build_context(chunks)
+
+    chain = create_chat_prompt() | model | StrOutputParser()
+
+    answer = await chain.ainvoke(
+        {
+            "input": request.message,
+            "context": context,
+            "chat_history": request.chat_history,
+        }
     )
-
-    qa_chain = create_chat_prompt() | model | StrOutputParser()
-    chain = create_retrieval_chain(history_aware_retriever, qa_chain)
-
-    # The third-party chain exposes the same mapping shape at runtime; the
-    # cast isolates that implementation detail from the typed app boundary.
-    return cast(RagChain, chain)
-
-
-def create_rag_chain(
-    model_provider: ModelProvider = ModelProvider.OPENAI,
-    model_options: ChatModelConfig | None = None,
-) -> RagChain:
-    """Get or build the cached RAG pipeline for validated model options."""
-
-    options = model_options or ChatModelConfig()
-    cache_key = _make_cache_key(model_provider, options)
-
-    if cache_key not in _rag_chain_cache:
-        _rag_chain_cache[cache_key] = _build_rag_chain(model_provider, options)
-
-    return _rag_chain_cache[cache_key]
-
-
-def clear_rag_chain_cache() -> None:
-    """Drop all cached chains, forcing a rebuild on the next request."""
-
-    _rag_chain_cache.clear()
-
-
-async def query_bot(request: ChatServiceRequest) -> ChatServiceResponse:
-    """Run a validated non-streaming RAG query."""
-
-    rag_chain = create_rag_chain(
-        model_provider=request.model_provider,
-        model_options=request.model_options,
-    )
-    rag_request = RagChainRequest(
-        input=request.message,
-        chat_history=request.chat_history,
-    )
-
-    raw_response = await rag_chain.ainvoke(rag_request.as_langchain_input())
-    response = RagChainResponse.model_validate(raw_response)
 
     return ChatServiceResponse(
-        answer=response.answer,
-        source_documents=[
-            SourceDocument.from_langchain_document(document)
-            for document in response.context
-        ],
+        answer=answer, source_documents=_build_source_documents(chunks)
     )
 
 
 async def stream_bot(
+    session: AsyncSession,
+    conversation_id: UUID,
     request: ChatServiceRequest,
-) -> AsyncGenerator[ChatStreamChunk]:
-    """Stream validated answer chunks from the RAG pipeline."""
+) -> AsyncGenerator[ChatStreamChunk | ChatStreamComplete]:
+    """Stream a RAG response using pgvector retrieval.
 
-    rag_chain = create_rag_chain(
-        model_provider=request.model_provider,
-        model_options=request.model_options,
-    )
-    rag_request = RagChainRequest(
-        input=request.message,
-        chat_history=request.chat_history,
+    Yields token chunks followed by one final ChatStreamComplete event that
+    carries the full answer and its source documents.
+    """
+
+    model_options = request.model_options or ChatModelConfig()
+
+    model = ModelFactory().get_chat_model(
+        provider=request.model_provider,
+        model_options=model_options,
     )
 
-    async for raw_chunk in rag_chain.astream(rag_request.as_langchain_input()):
-        chunk = RagChainChunk.model_validate(raw_chunk)
-        if chunk.answer:
-            yield ChatStreamChunk(token=chunk.answer)
+    chunks = await _retrieve_chunks(session, conversation_id, request, model)
+    context = _build_context(chunks)
+
+    chain = create_chat_prompt() | model | StrOutputParser()
+
+    answer_parts: list[str] = []
+
+    async for token in chain.astream(
+        {
+            "input": request.message,
+            "context": context,
+            "chat_history": request.chat_history,
+        }
+    ):
+        if token:
+            answer_parts.append(token)
+            yield ChatStreamChunk(token=token)
+
+    yield ChatStreamComplete(
+        conversation_id=conversation_id,
+        response="".join(answer_parts),
+        source_documents=_build_source_documents(chunks),
+    )

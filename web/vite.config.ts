@@ -5,6 +5,9 @@ import { defineConfig } from 'vite';
 import svelteSvg from '@poppanator/sveltekit-svg';
 
 export default defineConfig({
+	ssr: {
+		noExternal: ['@tanstack/svelte-query', '@tanstack/svelte-query-devtools']
+	},
 	plugins: [
 		tailwindcss(),
 		svelteSvg(),

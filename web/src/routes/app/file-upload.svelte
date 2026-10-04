@@ -12,6 +12,9 @@
 	import { Dot, File, Trash } from '@lucide/svelte';
 	import type { StoredDocumentType } from '$lib/indexed-db/documents';
 	import type { DocumentFlow } from './+page.svelte';
+	import { goto, invalidate } from '$app/navigation';
+	import { resolve } from '$app/paths';
+	import { toast } from 'svelte-sonner';
 
 	interface Props {
 		documentFlow: DocumentFlow;
@@ -52,13 +55,34 @@
 	}
 
 	const processing = useUploadProgress({
-		onCompleted: async () => {
+		onCompleted: async (data) => {
+			if (!data.conversation_id) {
+				onFlowChange('selected');
+				return;
+			}
+
 			onFlowChange('ready');
-			await upload.clearStoredDocuments();
+			try {
+				await upload.clearStoredDocuments();
+			} catch (error) {
+				console.error('Could not clear the staged document:', error);
+				toast.error('Your document is ready, but its local copy could not be cleared.');
+			}
+
+			try {
+				await invalidate('app:conversations');
+				await goto(
+					resolve('/app/chat/[conversation_id]', { conversation_id: data.conversation_id })
+				);
+			} catch (error) {
+				console.error('Could not open the processed document:', error);
+				toast.error('Your document is ready. Open it from Recents.');
+			}
 		},
 
-		onError: () => {
+		onError: (message) => {
 			onFlowChange('selected');
+			toast.error(message);
 		}
 	});
 

@@ -10,15 +10,7 @@ SYSTEM_PROMPT = """You are a helpful and friendly AI assistant that answers ques
 Remember: Quality over quantity - provide precise, accurate answers rather than lengthy explanations.
 """
 
-HISTORY_PROMPT = """Given the conversation history and the current question, your task is to create a comprehensive search query. Follow these steps:
-
-1. Review the conversation history to understand the context
-2. Identify any relevant context from previous messages
-3. Rephrase the current question to include this context
-4. Make the rephrased question specific and detailed
-
-For example:
-- If the original question is "What about its architecture?" and previous messages discussed a specific neural network
-- Rephrase it as "What is the architecture of [specific neural network mentioned]?"
-
-Your goal is to create a search query that will retrieve the most relevant information from the knowledge base."""
+HISTORY_PROMPT = """Use the conversation history to rewrite the latest question as a standalone search query.
+Resolve references to previously discussed subjects and include the context needed to retrieve relevant document passages.
+Return only the rewritten query. Do not answer the question. If the question already stands alone, return it unchanged.
+"""

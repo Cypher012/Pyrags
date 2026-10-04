@@ -1,11 +1,22 @@
 import { env } from '$env/dynamic/public';
 
+const BASE_URL = env.PUBLIC_BASE_URL || 'http://localhost:8000';
+
 const API_ROUTES = {
-	base_url: env.PUBLIC_BASE_URL,
-	chat_query: `/chat/query`,
+	query_usage: '/chat/usage',
 	upload_file: `/embeddings/upload-file`,
 	upload_status(jobId: string) {
-		return `${this.base_url}/embeddings/upload-status/${jobId}`;
+		return `${BASE_URL}/embeddings/upload-status/${jobId}`;
+	},
+	query_chatbot(conversationId: string) {
+		return `/chat/conversations/${conversationId}/query`;
+	},
+	conversation(conversationId: string) {
+		return `/chat/conversations/${conversationId}`;
+	},
+	conversation_list: `/chat/conversations`,
+	conversation_messages(conversationId: string) {
+		return `/chat/conversations/${conversationId}/messages`;
 	}
 };
 

@@ -12,12 +12,13 @@
 	let { children, data }: Props = $props();
 
 	const user = $derived(data.user);
+	const conversations = $derived(data.conversations);
 </script>
 
 <Sidebar.Provider>
-	<AppSidebar {user} />
+	<AppSidebar {user} {conversations} />
 	<Sidebar.Inset>
-		<div class="flex flex-1 flex-col gap-4 p-4 pt-0">
+		<div class="flex flex-1 flex-col gap-4">
 			{@render children()}
 		</div>
 	</Sidebar.Inset>

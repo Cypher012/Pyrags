@@ -114,9 +114,10 @@ export function useFileUpload() {
 
 		if (!document) {
 			toast.error('Select a document first.');
-			return;
+			throw new Error('Select a document first');
 		}
 
+		uploadedData = null;
 		try {
 			uploadedData = await uploadFile(document.file);
 
@@ -124,6 +125,7 @@ export function useFileUpload() {
 		} catch (error) {
 			console.error('Failed to upload document:', error);
 			toast.error('Could not upload the document.');
+			throw error;
 		}
 	}
 

@@ -1,288 +1,282 @@
 # Pyrags
 
-![Status](https://img.shields.io/badge/status-early%20development-orange)
+![Status](https://img.shields.io/badge/status-v1%20active%20development-orange)
 ![Python](https://img.shields.io/badge/Python-3.13+-3776AB?logo=python&logoColor=white)
 ![FastAPI](https://img.shields.io/badge/FastAPI-0.141-009688?logo=fastapi&logoColor=white)
 ![Svelte](https://img.shields.io/badge/Svelte-5-FF3E00?logo=svelte&logoColor=white)
+![PostgreSQL](https://img.shields.io/badge/PostgreSQL-17%20%2B%20pgvector-4169E1?logo=postgresql&logoColor=white)
 ![TypeScript](https://img.shields.io/badge/TypeScript-6-3178C6?logo=typescript&logoColor=white)
 
-Document-grounded question answering with real-time ingestion — upload a PDF or DOCX, watch it get extracted, chunked, embedded, and indexed over SSE, then query it through a citation-backed retrieval API.
-
-> **Status:** Pyrags is in active early development. The document ingestion pipeline and the RAG query API are functional end to end; the chat interface, persistent conversations, and per-user document storage are on the roadmap. Expect breaking changes.
+Document-grounded question answering: upload a PDF or DOCX, watch it get extracted, chunked, embedded, and indexed in real time, then have a persistent conversation with it — every answer cited back to the exact passage and page it came from.
 
 ## Overview
 
-Pyrags is a document intelligence system for studying academic and technical material — course slides, lecture notes, papers, and documentation. Instead of a one-shot "upload and hope" flow, it treats document processing as a first-class, observable job: the file is staged locally in the browser, processing starts only when the user confirms, and every backend stage streams back to the UI in real time.
+Pyrags is a document intelligence application for studying academic and technical material — course notes, research papers, reports, and documentation. Upload a document and it becomes a conversation you can return to: questions are answered from the document's own text, with source passages attached so every claim can be verified.
 
-The system is a SvelteKit 5 application backed by a FastAPI service. Documents are converted into metadata-rich chunks (file, type, page number, chunk position), embedded with OpenAI, and indexed in Pinecone. A LangChain retrieval chain answers questions strictly from the indexed document and returns the source passages used, so every answer can be traced back to the material.
+The system is a SvelteKit frontend backed by a FastAPI service. Documents are processed as observable background jobs whose progress streams to the browser over SSE; chunks are embedded with OpenAI and stored in PostgreSQL with pgvector; retrieval is scoped to the conversation, so each conversation only ever answers from its own document.
 
-Where it is going: persistent, per-user conversation and document storage (Postgres), conversation-scoped retrieval, and a full conversational UI.
+## Features
 
-## Current Capabilities
+**Document ingestion**
 
-**Authentication & users**
+- PDF and DOCX upload, staged in the browser (IndexedDB) until explicitly confirmed
+- Background processing job with per-stage progress streamed over Server-Sent Events (`upload → extracting → chunking → embedding → storing → completed`)
+- Per-page PDF extraction with preserved page numbers (pypdf); paragraph-level DOCX extraction (python-docx)
+- Recursive chunking (1000 chars / 200 overlap) with citation metadata captured at chunk time
+- OpenAI `text-embedding-3-large` (1024 dimensions), stored in pgvector with an HNSW cosine index
 
-- OAuth sign-in with Google or GitHub (Better Auth), sessions stored in Postgres via Drizzle
-- JWT issuance with a custom `{id, email}` payload; protected `/app` workspace with server-side route guard
-- Authenticated API client: an Axios interceptor attaches the Better Auth JWT as a Bearer token to every backend request
+**Conversations**
 
-**Document ingestion (functional end to end)**
+- Persistent conversations, messages, and citations in PostgreSQL — history survives restarts
+- Conversation list with rename and delete
+- Follow-up questions answered with full conversation history as context
+- Optional token-by-token streaming (NDJSON), with a final completion event carrying the answer's sources
+- Source citations persisted per assistant message — file name, file type, page number, chunk position
 
-- PDF and DOCX upload with client-side validation (type, ≤ 5 MB, single document)
-- Browser-side staging in IndexedDB — a selected document survives page reloads and is only sent to the server when the user confirms processing
-- Asynchronous, job-based processing on the backend with per-stage progress streamed over SSE
-- Text extraction with page fidelity (per-page PDF extraction; paragraph-level DOCX extraction)
-- Recursive chunking with citation metadata (`file_name`, `file_type`, `page_number`, `chunk_index`)
-- OpenAI embeddings (`text-embedding-3-large`, 1024 dimensions) stored in a Pinecone serverless index
+**Accounts and usage**
 
-**Retrieval & chat API (backend functional; frontend UI in progress)**
+- Google and GitHub OAuth (Better Auth); the backend verifies EdDSA JWTs against the frontend JWKS endpoint
+- Every API route is authenticated; conversations, documents, and upload jobs are scoped per user
+- Daily query budget per user with an atomic reserve/refund design, `429` + `Retry-After` on exhaustion, and a usage endpoint the UI polls
 
-- `POST /chat/query` — document-grounded answers over a history-aware retrieval chain (k=5)
-- Source citations returned with every non-streaming answer
-- Session-scoped follow-up questions via `session_id` (in-memory history)
-- Optional token streaming as NDJSON with an `X-Session-ID` header
-- Pluggable chat models: OpenAI (default `gpt-5-nano`) or Gemini (default `gemini-2.5-flash`), with validated model options
+**Platform**
 
-## Document Processing Flow
+- Fully containerized backend (Dockerfile + Compose with the `pgvector/pgvector:pg17` image)
+- Alembic migrations, including the pgvector extension and HNSW index
+- Optional mock API (`/mock/*`, disabled by default) that mirrors the real routes for frontend development — documented in `server/README.md`
 
-The implemented lifecycle deliberately separates **selecting** a document from **processing** it:
+## How It Works
 
-1. **Select** — the user drops a PDF/DOCX into `/app`. The file is validated and written to IndexedDB (`pyrags.documents`), so it survives reloads. Nothing is uploaded yet.
-2. **Confirm** — clicking _Process documents_ uploads the file to `POST /embeddings/upload-file`. The backend validates the extension, allocates a `job_id` and an in-memory progress queue, starts a background task, and returns `{job_id, filename}` immediately.
-3. **Track** — the frontend opens an `EventSource` on `GET /embeddings/upload-status/{job_id}` and renders live progress.
-4. **Process** — the background job extracts text (per page for PDF), splits it into metadata-aware chunks, generates embeddings, and recreates + populates the Pinecone index. Each stage publishes a `JobProgress` event.
-5. **Ready** — on `completed`, the backend invalidates its cached RAG chains (so the next query reads the new index) and the frontend clears the staged file from IndexedDB and marks the document ready.
+1. **Select** — the user drops a PDF/DOCX into the app. The file is validated and staged in IndexedDB; nothing is uploaded yet.
+2. **Confirm** — _Process documents_ uploads the file to `POST /embeddings/upload-file`. The backend validates it, allocates a `job_id` and a progress queue, starts a background task, and returns immediately.
+3. **Track** — the frontend follows `GET /embeddings/upload-status/{job_id}` (SSE consumed over `fetch`, so the Bearer token can be attached) and renders live progress.
+4. **Process** — the job extracts text, builds metadata-aware chunks, embeds them, and writes the conversation, document, and chunks transactionally. The final SSE event carries the new `conversation_id`.
+5. **Chat** — the frontend redirects to `/app/chat/{conversation_id}`. Each question is embedded, matched against the conversation's chunks by cosine distance (top 5), and answered by the model with the retrieved passages as context — then the answer and its sources are persisted.
 
 ```mermaid
 sequenceDiagram
     actor User
-    participant UI as SvelteKit /app
+    participant UI as SvelteKit app
     participant IDB as IndexedDB
     participant API as FastAPI
-    participant PC as Pinecone
+    participant DB as Postgres + pgvector
+    participant AI as OpenAI / Gemini
 
-    User->>UI: Select PDF or DOCX (max 5 MB)
+    User->>UI: Select PDF or DOCX
     UI->>IDB: Stage file locally
-    User->>UI: Process documents
+    User->>UI: Process document
     UI->>API: POST /embeddings/upload-file (Bearer JWT)
     API-->>UI: 200 { job_id, filename }
     UI->>API: GET /embeddings/upload-status/job_id (SSE)
-    API-->>UI: stage=upload (10)
-    API-->>UI: stage=extracting (30)
-    API-->>UI: stage=chunking (50)
-    API-->>UI: stage=embedding (70)
-    API->>PC: recreate index, upsert vectors
-    API-->>UI: stage=storing (90)
-    API-->>UI: stage=completed (100)
-    UI->>IDB: Clear staged file
+    API->>AI: Embed chunks
+    API->>DB: conversation + document + chunks (transaction)
+    API-->>UI: stage=completed, conversation_id
+    UI->>UI: Redirect to /app/chat/conversation_id
+    User->>UI: Ask a question
+    UI->>API: POST /chat/conversations/id/query
+    API->>DB: Cosine similarity search (top 5, HNSW)
+    API->>AI: Answer with retrieved context
+    API->>DB: Persist message + source citations
+    API-->>UI: Answer + sources (JSON or NDJSON stream)
 ```
 
-## Real-Time Processing
-
-Long-running ingestion runs as an **in-process job** rather than a blocking request:
-
-- `POST /embeddings/upload-file` returns a `job_id` immediately; work continues in an `asyncio` background task.
-- Each job owns an `asyncio.Queue`. The pipeline publishes typed `JobProgress` events (`stage`, `message`, `progress`) as it moves through extraction, chunking, embedding, and storage.
-- `GET /embeddings/upload-status/{job_id}` drains that queue as **Server-Sent Events** and terminates on `completed` or `error`.
-- On the frontend, `useUploadProgress` wraps the `EventSource` in reactive Svelte 5 state with completion/error callbacks and automatic teardown.
-
-CPU- and network-bound stages (parsing, embedding, upserting) run in worker threads via `asyncio.to_thread`, keeping the event loop responsive while a job is in flight.
-
-## Frontend Architecture
-
-`web/` — SvelteKit 2, Svelte 5 (runes mode enforced project-wide), TypeScript 6, Tailwind CSS 4.
-
-- **Component system:** shadcn-svelte (bits-ui), lucide icons, `svelte-sonner` toasts, `mode-watcher` theming
-- **Auth:** Better Auth client/server with Google + GitHub providers and the JWT plugin; sessions resolved in `hooks.server.ts`; `/app` guarded by a server load function
-- **API layer:** a single Axios instance (`src/lib/api.ts`) with a request interceptor that fetches the Better Auth JWT and attaches it as a Bearer token; route constants in `src/lib/api_routes.ts`
-- **Reusable stateful hooks** (Svelte 5 `$state`/`$effect` runes):
-  - `useFileUpload` — selection, validation feedback, IndexedDB staging, upload
-  - `useUploadProgress` — SSE subscription, progress state, lifecycle callbacks
-- **Browser persistence:** a small raw-IndexedDB module (`src/lib/indexed-db/documents.ts`) storing staged `File` objects with typed metadata
-- **Data:** Drizzle ORM over Postgres (auth tables only, for now)
-- **Deployment target:** Cloudflare Workers (`@sveltejs/adapter-cloudflare` + Wrangler)
-
-## Backend Architecture
-
-`server/` — FastAPI (Python 3.13, managed with uv), organized as feature modules behind a root router:
-
-- **`embeddings`** — upload endpoint, SSE status endpoint, and the processing pipeline: extract (`pypdf`, `python-docx`) → chunk (`RecursiveCharacterTextSplitter`) → embed (`langchain-openai`) → store (`langchain-pinecone` / Pinecone serverless)
-- **`chat`** — LangChain history-aware retrieval chain over Pinecone; `ModelFactory` for OpenAI/Gemini chat models; per-configuration chain caching with invalidation on each new indexed document; in-memory session histories; NDJSON token streaming
-- **`auth`** — EdDSA JWT verification against the frontend JWKS endpoint with a kid-keyed key cache (implemented; route enforcement is a roadmap item)
-- **`health`** — liveness endpoint
-
-The HTTP layer, service layer, and LangChain boundary each have their own Pydantic contracts (`ChatRequest`/`ChatServiceRequest`/`RagChainRequest`), so third-party chain shapes never leak into the API.
+## Architecture
 
 ```mermaid
 flowchart TD
-    subgraph browser["Browser - SvelteKit 2 + Svelte 5"]
-        page["Guided /app flow"]
-        idb[("IndexedDB - staged document")]
-        sseHook["useUploadProgress - EventSource"]
-        apiClient["Axios client - JWT interceptor"]
+    subgraph browser["Browser — SvelteKit 2 + Svelte 5"]
+        page["Upload flow + chat UI"]
+        idb[("IndexedDB — document staging")]
+        query["TanStack Query — messages, usage"]
     end
 
     subgraph web["SvelteKit server"]
-        auth["Better Auth - Google + GitHub OAuth, JWT"]
-        pg[("PostgreSQL - auth tables, Drizzle")]
+        auth["Better Auth — Google + GitHub OAuth, JWT"]
+        authdb[("Postgres — auth tables, Drizzle")]
     end
 
     subgraph api["FastAPI backend"]
         upload["POST /embeddings/upload-file"]
-        job["Background job - extract, chunk, embed, store"]
-        sse["GET /embeddings/upload-status/:job_id - SSE"]
-        chat["POST /chat/query - RAG chain, NDJSON stream"]
-        state[/"In-memory job queues + session histories"/]
+        sse["GET /embeddings/upload-status/:job_id — SSE"]
+        chat["Chat routes — query, history, rename, delete"]
+        usage["GET /chat/usage — daily budget"]
+        pipeline["Ingestion job — extract, chunk, embed, store"]
+        guard["JWT auth — EdDSA via frontend JWKS"]
     end
 
-    openai["OpenAI - embeddings + chat models"]
-    gemini["Gemini - chat models"]
-    pinecone[("Pinecone - serverless vector index")]
+    db[("Postgres + pgvector — conversations, documents, chunks, messages, usage")]
+    openai["OpenAI — embeddings + chat models"]
+    gemini["Gemini — optional chat provider"]
 
     page --> idb
-    page --> apiClient
-    apiClient --> upload
-    apiClient --> chat
-    sseHook --> sse
-    upload --> job
-    job --> state
-    job --> openai
-    job --> pinecone
-    sse --> state
+    page --> upload
+    page --> sse
+    page --> chat
+    query --> usage
+    upload --> pipeline
+    pipeline --> openai
+    pipeline --> db
+    chat --> db
     chat --> openai
     chat --> gemini
-    chat --> pinecone
-    auth --> pg
+    upload --> guard
+    sse --> guard
+    chat --> guard
+    auth --> authdb
 ```
 
 ## Technology Stack
 
-**Frontend** — SvelteKit 2, Svelte 5 (runes), TypeScript 6, Tailwind CSS 4, shadcn-svelte / bits-ui, Axios, Better Auth, Drizzle ORM, `svelte-file-dropzone`, IndexedDB
+**Frontend** — SvelteKit 2, Svelte 5 (runes), TypeScript 6, Tailwind CSS 4, shadcn-svelte, TanStack Query, Better Auth, Drizzle ORM, Axios, marked + DOMPurify, IndexedDB, Cloudflare Workers adapter
 
-**Backend** — FastAPI 0.141, Pydantic 2 / pydantic-settings, LangChain 1.x (`langchain-openai`, `langchain-google-genai`, `langchain-pinecone`, `langchain-text-splitters`), pypdf, python-docx, PyJWT + httpx (JWKS)
+**Backend** — FastAPI, Pydantic 2, SQLModel + async SQLAlchemy, Alembic, LangChain (model integrations + text splitters), pypdf, python-docx, PyJWT + httpx (JWKS)
 
-**AI / Retrieval** — OpenAI `text-embedding-3-large` (1024 dims), OpenAI or Gemini chat models, Pinecone serverless vector index, similarity retrieval (k=5) with a history-aware retriever
+**AI / Retrieval** — OpenAI `text-embedding-3-large` (1024d), OpenAI or Gemini chat models, pgvector cosine search with HNSW indexing, conversation-scoped retrieval
 
-**Database / Persistence** — PostgreSQL 17 (auth, via Drizzle; Docker Compose), IndexedDB (browser document staging)
+**Data** — PostgreSQL 17 + pgvector (application data), PostgreSQL 17 (auth, via Drizzle), IndexedDB (browser staging)
 
-**Tooling** — uv (Python), Bun, Vite 8, Wrangler / Cloudflare adapter, drizzle-kit, ESLint + Prettier, svelte-check
+**Tooling** — uv, Bun, Docker Compose, Wrangler, drizzle-kit, ESLint + Prettier, svelte-check
 
 ## Project Structure
 
 ```text
 Pyrags/
-├── server/                        # FastAPI backend (Python 3.13, uv)
-│   ├── main.py                    # App entry: CORS, router registration
-│   ├── config.py                  # pydantic-settings configuration
-│   ├── docker-compose.yaml        # Postgres + API scaffold (DB not yet used)
+├── server/                          # FastAPI backend (Python 3.13, uv)
+│   ├── main.py                      # App entry: config-driven CORS/debug, router
+│   ├── Dockerfile                   # uv-based image; migrations run on start
+│   ├── docker-compose.yaml          # pgvector Postgres, API, Adminer
+│   ├── alembic/                     # Migrations (pgvector, tables, enums, JSONB)
 │   └── app/
-│       ├── router.py              # Route registry
-│       ├── auth/                  # JWT (EdDSA/JWKS) verification utilities
-│       ├── chat/                  # RAG chain, model factory, sessions, prompts
-│       ├── embeddings/            # Upload + SSE endpoints, pipeline, Pinecone store
-│       └── health/                # GET / liveness
-└── web/                           # SvelteKit frontend (Svelte 5, TypeScript)
+│       ├── core/                    # Settings (pydantic-settings), async DB session
+│       ├── auth/                    # EdDSA JWT verification against frontend JWKS
+│       ├── embeddings/              # Upload + SSE status routes, ingestion pipeline
+│       ├── chat/                    # RAG service, routes, model factory, rate limiting
+│       ├── model/                   # SQLModel tables: conversations, documents,
+│       │                            #   document_chunks (vector), messages, usage
+│       ├── repository/              # Data access (conversation-scoped vector search)
+│       ├── mock/                    # Optional mock API for frontend development
+│       └── health/                  # GET / liveness
+└── web/                             # SvelteKit frontend (Svelte 5, TypeScript)
     ├── src/
-    │   ├── hooks.server.ts        # Session resolution
-    │   ├── lib/
-    │   │   ├── api.ts             # Axios instance + Bearer interceptor
-    │   │   ├── api_routes.ts      # Backend route constants
-    │   │   ├── auth-client.ts     # Better Auth client (JWT plugin)
-    │   │   ├── hooks/             # useFileUpload, useUploadProgress (SSE)
-    │   │   ├── indexed-db/        # Document staging store
-    │   │   ├── server/            # auth.ts, db/ (Drizzle auth schema)
-    │   │   └── components/        # shadcn-svelte UI, sidebar, nav-user
-    │   └── routes/
-    │       ├── sign-in/           # OAuth sign-in
-    │       └── app/               # Protected upload + processing flow
-    ├── drizzle/                   # Auth schema migration
-    ├── compose.yaml               # Postgres 17 (auth database)
-    └── wrangler.jsonc             # Cloudflare Workers deployment
+    │   ├── routes/
+    │   │   ├── +page.svelte         # Landing page with interactive product preview
+    │   │   ├── sign-in/             # Google / GitHub OAuth
+    │   │   └── app/                 # Protected workspace
+    │   │       ├── +page.svelte     # Upload + processing flow
+    │   │       └── chat/            # Conversation view
+    │   └── lib/
+    │       ├── api.ts               # Axios instance + Bearer interceptor
+    │       ├── chat-stream.ts       # NDJSON/SSE stream reader
+    │       ├── hooks/               # use-file-upload, use-upload-progress,
+    │       │                        #   use-chat, use-query-usage
+    │       ├── indexed-db/          # Document staging store
+    │       ├── components/          # App shell, chat, sources, shadcn-svelte UI
+    │       └── server/              # Better Auth config, Drizzle schema
+    ├── drizzle/                     # Auth schema migration
+    └── compose.yaml                 # Postgres 17 (auth database)
 ```
 
 ## Getting Started
 
-Prerequisites: **uv**, **Bun**, **Docker**, plus OpenAI and Pinecone API keys.
+Prerequisites: **uv**, **Bun**, **Docker**, an **OpenAI API key**.
 
 **1. Backend** (http://127.0.0.1:8000)
 
 ```bash
 cd server
+docker compose up -d api-db     # Postgres 17 + pgvector on localhost:5433
+cp .env.example .env            # set OPENAI_API_KEY, API_DB_PASSWORD, DATABASE_URL
 uv sync
+uv run alembic upgrade head
 uv run uvicorn main:app --reload
 ```
 
-Create `server/.env` first (see below) — there is no `.env.example` yet.
+`DATABASE_URL` for local development:
+
+```text
+postgresql+asyncpg://cipher:<API_DB_PASSWORD>@localhost:5433/pyrags
+```
 
 **2. Frontend** (http://localhost:5173)
 
 ```bash
 cd web
 bun install
-cp .env.example .env    # fill in values; also add GOOGLE_* and PUBLIC_BASE_URL
-bun run db:start        # Postgres 17 for auth, via Docker Compose
-bun run db:push         # Apply the Drizzle auth schema
+cp .env.example .env            # auth secret, OAuth keys, DATABASE_URL, PUBLIC_BASE_URL
+bun run db:start                # Postgres 17 for auth on localhost:5432
+bun run db:push                 # Apply the Drizzle auth schema
 bun run dev
 ```
 
+Sign in with Google or GitHub, drop in a document, and process it — the app redirects into the new conversation when indexing completes.
+
 ## Environment Variables
 
-**`web/.env`** (see `web/.env.example` — note it currently omits the Google and API-base entries below):
+**`server/.env`** (see `server/.env.example`):
 
-| Variable                                    | Purpose                                                             |
-| ------------------------------------------- | ------------------------------------------------------------------- |
-| `DATABASE_URL`                              | Postgres connection for Better Auth (must match `web/compose.yaml`) |
-| `ORIGIN`                                    | Base URL of the frontend (e.g. `http://localhost:5173`)             |
-| `BETTER_AUTH_SECRET`                        | Auth signing secret (32+ chars, high entropy)                       |
-| `GITHUB_CLIENT_ID` / `GITHUB_CLIENT_SECRET` | GitHub OAuth app credentials                                        |
-| `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | Google OAuth credentials                                            |
-| `PUBLIC_BASE_URL`                           | FastAPI base URL (defaults to `http://localhost:8000`)              |
-| `APP_DB_PASSWORD`                           | Postgres password used by `web/compose.yaml`                        |
+| Variable               | Purpose                                                         |
+| ---------------------- | --------------------------------------------------------------- |
+| `OPENAI_API_KEY`       | Embeddings + default chat provider (required)                   |
+| `GEMINI_API_KEY`       | Optional Gemini chat provider                                   |
+| `DATABASE_URL`         | Async Postgres connection (pgvector-enabled)                    |
+| `FRONTEND_URL`         | JWT issuer/audience; JWKS from `{FRONTEND_URL}/api/auth/jwks`   |
+| `DEBUG`                | FastAPI debug mode — keep `false` outside development           |
+| `ENABLE_MOCK_API`      | Mount unauthenticated `/mock/*` routes — local development only |
+| `MOCK_*_DELAY_SECONDS` | Simulated latencies for the mock API                            |
+| `API_DB_PASSWORD`      | Postgres password used by `docker-compose.yaml`                 |
 
-**`server/.env`** (no example file yet; keys read by `server/config.py`):
+**`web/.env`** (see `web/.env.example`):
 
-| Variable              | Purpose                                                                  |
-| --------------------- | ------------------------------------------------------------------------ |
-| `OPENAI_API_KEY`      | Embeddings + default chat provider                                       |
-| `GEMINI_API_KEY`      | Optional, for the Gemini chat provider                                   |
-| `PINECONE_API_KEY`    | Vector store                                                             |
-| `PINECONE_INDEX_NAME` | Index name (default `pyrags`)                                            |
-| `FRONTEND_URL`        | JWT issuer/audience; JWKS is fetched from `{FRONTEND_URL}/api/auth/jwks` |
-| `DATABASE_URL`        | Reserved — backend persistence is not implemented yet                    |
+| Variable                                    | Purpose                                                          |
+| ------------------------------------------- | ---------------------------------------------------------------- |
+| `DATABASE_URL`                              | Postgres connection for Better Auth (matches `web/compose.yaml`) |
+| `APP_DB_PASSWORD`                           | Postgres password used by `web/compose.yaml`                     |
+| `ORIGIN`                                    | Public base URL of the frontend                                  |
+| `BETTER_AUTH_SECRET`                        | Auth signing secret (32+ chars, high entropy)                    |
+| `GITHUB_CLIENT_ID` / `GITHUB_CLIENT_SECRET` | GitHub OAuth app credentials                                     |
+| `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | Google OAuth credentials                                         |
+| `PUBLIC_BASE_URL`                           | FastAPI base URL (default `http://localhost:8000`)               |
+
+## API Overview
+
+All routes except `GET /` require a Bearer JWT. Mock mirrors exist under `/mock/*` when `ENABLE_MOCK_API=true`.
+
+| Route                                    | Purpose                                                                |
+| ---------------------------------------- | ---------------------------------------------------------------------- |
+| `GET /`                                  | Liveness check                                                         |
+| `POST /embeddings/upload-file`           | Start an ingestion job — `{ job_id, filename }`                        |
+| `GET /embeddings/upload-status/{job_id}` | SSE stream of `JobProgress` events (owner-checked)                     |
+| `POST /chat/conversations/{id}/query`    | Ask a question — JSON, or NDJSON token stream with `is_stream`         |
+| `GET /chat/conversations?limit=`         | List the user's conversations, most recent first                       |
+| `GET /chat/conversations/{id}`           | Conversation header with document count                                |
+| `PATCH /chat/conversations/{id}`         | Rename a conversation                                                  |
+| `DELETE /chat/conversations/{id}`        | Delete a conversation and its data                                     |
+| `GET /chat/conversations/{id}/messages`  | Message history with persisted citations                               |
+| `GET /chat/usage`                        | Daily query budget: `{ limit, used, remaining, unlimited, resets_at }` |
+
+Interactive documentation is available at `/docs` when the server is running.
 
 ## Development Status
 
-Pyrags is in **active early development**. What works today: authentication, the browser-staged upload flow, the real-time ingestion pipeline, vector indexing, and the RAG query API (including streaming and session follow-ups). What does not: the chat UI, any form of server-side persistence for documents or conversations, and backend route authorization. APIs and data models will change without notice.
+Pyrags is **v1 in active development**. The core loop is complete end to end: authenticated upload → real-time ingestion → persistent, citation-backed conversations with per-user isolation and rate limiting. APIs and schemas may still change between versions.
 
-## Roadmap / In Progress
+### Roadmap
 
-- **Chat interface** — the `/chat/query` API, streaming protocol, and the frontend route constant exist; the UI does not
-- **Persistent conversations** — `Conversation` / `Message` models; the in-memory session store is explicitly marked for replacement
-- **Document model & multi-document library** — uploads currently replace the entire index; only one staged document is supported by design
-- **Backend Postgres integration** — `DATABASE_URL` and a Compose service are provisioned but unused; pgvector-backed chunk storage is a candidate direction alongside relational models
-- **Conversation-scoped retrieval** — create a conversation when processing completes, return its `conversation_id` in the final SSE event, and redirect into the conversation view
-- **AI-generated conversation titles** and persistent chat history
-- **Backend route authorization** — the JWT dependency (`get_user_current`) is implemented but not yet attached to routes
-- API Dockerfile, tests, CI
-
-## Engineering Notes
-
-- **Selection is decoupled from processing.** Files are staged in IndexedDB and only hit the network after explicit confirmation, which makes the pre-upload state reload-safe and keeps large files off the wire until they are wanted.
-- **Jobs, not requests.** Ingestion runs as a background task with a per-job queue, so the upload request returns immediately and progress is observable over SSE instead of a spinner on a hanging POST.
-- **Citations are a data-model decision, not a UI afterthought.** Page numbers and chunk positions are captured at chunking time and flow through embeddings, Pinecone metadata, retrieval, and the API response as typed models.
-- **Typed boundary around LangChain.** The chain speaks LCEL mappings; the application speaks Pydantic models, with explicit adapters between them.
-- **Cache invalidation on re-index.** RAG chains are cached per model configuration and flushed when a new document finishes indexing, so answers always reflect the active document.
+- **Multiple documents per conversation** — the schema supports it; uploads currently create a new conversation each time
+- **AI-generated conversation titles** (today the title is the filename)
+- **Durable job queue** for ingestion (jobs are in-process; fine for a single instance, not for multi-replica deployments)
+- **Automated tests and CI**
+- **Hosted deployment guide** — the API Dockerfile and Cloudflare Worker config already exist
 
 ## Known Limitations
 
-- **Single-document knowledge base.** Storing vectors deletes and recreates the Pinecone index, so a new upload replaces the previously indexed document. Vector data is global — not scoped per user.
-- **Volatile state.** Job queues and chat sessions live in process memory: they are lost on restart and make multi-instance deployment unsafe. Job queues are also never reaped after completion.
-- **Backend endpoints are currently unauthenticated** (the JWT dependency exists but is not wired in), CORS allows all origins with credentials, and the app runs in debug mode — development posture, not deployment posture.
-- Streaming chat responses contain only answer tokens; source documents are returned by the non-streaming response only.
-- DOCX sources have no page numbers (paragraph extraction does not preserve rendered layout).
-- Uploads are limited to one PDF/DOCX up to 5 MB, validated client-side; the backend checks extension only and reads the whole file into memory.
-- The frontend has no chat UI yet; the root route is a temporary health-check page.
+- Upload job state (queues, SSE streams) is in-memory: a restart drops in-flight jobs, and horizontal scaling requires an external queue.
+- One document per conversation; replacing it means starting a new conversation.
+- DOCX citations have no page numbers (paragraph extraction does not preserve rendered page layout).
+- The daily query budget is currently fixed in code (6 per day, resetting at midnight Africa/Lagos), with a single unlimited-account override.
+- The model picker in the UI exposes OpenAI models; Gemini is available through the API.
+- Keep `ENABLE_MOCK_API=false` outside local development — mock routes are intentionally unauthenticated.
 
 ## License
 
-No license has been chosen yet. Until one is added, this code is not open source in the legal sense — all rights remain with the author.
+No license has been chosen yet. Until one is added, all rights remain with the author.

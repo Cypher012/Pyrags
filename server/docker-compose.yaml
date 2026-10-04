@@ -1,6 +1,6 @@
 services:
   api-db:
-    image: postgres:17-alpine
+    image: pgvector/pgvector:pg17
     restart: always
     ports:
       - "5433:5432"   # 5433 on host so it doesn't clash with the auth DB on 5432
@@ -24,9 +24,18 @@ services:
     env_file: .env
     environment:
       DATABASE_URL: postgresql+asyncpg://cipher:${API_DB_PASSWORD}@api-db:5432/pyrags
+      FRONTEND_URL: ${FRONTEND_URL:-http://localhost:5173}
     depends_on:
       api-db:
         condition: service_healthy
+
+  adminer:
+    image: adminer:latest
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    depends_on:
+      - api-db
 
 volumes:
   api_pgdata:

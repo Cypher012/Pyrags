@@ -7,4 +7,4 @@ router = APIRouter()
 
 @router.get("/", response_model=HealthResponse)
 def read_root() -> HealthResponse:
-    return HealthResponse(message="Hello, World")
+    return HealthResponse(status="ok", service="pyrags")

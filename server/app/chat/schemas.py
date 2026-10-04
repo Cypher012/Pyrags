@@ -1,4 +1,5 @@
-from langchain_core.documents import Document
+from uuid import UUID
+
 from langchain_core.messages import BaseMessage
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -9,7 +10,19 @@ from app.embeddings.documents import SourceDocument
 class ChatRequest(BaseModel):
     """HTTP request for a conversational RAG query."""
 
-    session_id: str | None = Field(default=None, min_length=1)
+    model_config = ConfigDict(
+        json_schema_extra={
+            "examples": [
+                {
+                    "message": "What is 2 + 2?",
+                    "is_stream": False,
+                    "model_provider": "openai",
+                    "model_options": {"model": "gpt-5-nano", "temperature": 0},
+                }
+            ]
+        }
+    )
+
     message: str = Field(min_length=1)
     is_stream: bool = False
     model_provider: ModelProvider = ModelProvider.OPENAI
@@ -17,11 +30,9 @@ class ChatRequest(BaseModel):
 
 
 class ChatResponse(BaseModel):
-    """HTTP response for a non-streaming chat query."""
-
-    session_id: str
+    conversation_id: UUID
     response: str
-    source_documents: list[SourceDocument] = Field(default_factory=list)
+    source_documents: list[SourceDocument]
 
 
 class ChatServiceRequest(BaseModel):
@@ -43,41 +54,15 @@ class ChatServiceResponse(BaseModel):
 
 
 class ChatStreamChunk(BaseModel):
-    """One JSON-serializable event emitted by the streaming endpoint."""
+    """One JSON-serializable token event emitted by the streaming endpoint."""
 
     token: str
 
 
-class RagChainRequest(BaseModel):
-    """Typed request adapted to the mapping-based LangChain runnable."""
+class ChatStreamComplete(BaseModel):
+    """Final NDJSON event emitted once a streaming reply has been persisted."""
 
-    model_config = ConfigDict(arbitrary_types_allowed=True)
-
-    input: str = Field(min_length=1)
-    chat_history: list[BaseMessage] = Field(default_factory=list)
-
-    def as_langchain_input(self) -> dict[str, object]:
-        """Convert the validated request to the shape expected by LCEL."""
-
-        return {
-            "input": self.input,
-            "chat_history": self.chat_history,
-        }
-
-
-class RagChainResponse(BaseModel):
-    """Validated non-streaming result produced by the retrieval chain."""
-
-    model_config = ConfigDict(arbitrary_types_allowed=True, extra="ignore")
-
-    answer: str
-    context: list[Document] = Field(default_factory=list)
-
-
-class RagChainChunk(BaseModel):
-    """Validated partial result produced while the retrieval chain streams."""
-
-    model_config = ConfigDict(arbitrary_types_allowed=True, extra="ignore")
-
-    answer: str | None = None
-    context: list[Document] = Field(default_factory=list)
+    token: str = ""
+    conversation_id: UUID
+    response: str
+    source_documents: list[SourceDocument] = Field(default_factory=list)

@@ -1,0 +1,35 @@
+import { error } from '@sveltejs/kit';
+import type { PageServerLoad } from './$types';
+import { api } from '$lib/api';
+import API_ROUTES from '$lib/api_routes';
+import { auth } from '$lib/server/auth';
+import type { ConversationHeader } from '$lib/types/conversation';
+import type { Message } from '$lib/types/message';
+import { isAxiosError } from 'axios';
+
+export const load: PageServerLoad = async ({ params, request, parent }) => {
+	await parent();
+
+	try {
+		const { token } = await auth.api.getToken({ headers: request.headers });
+		const authHeader = { Authorization: `Bearer ${token}` };
+		const [conversation, messages] = await Promise.all([
+			api.get<ConversationHeader>(API_ROUTES.conversation(params.conversation_id), {
+				headers: authHeader
+			}),
+			api.get<Message[]>(API_ROUTES.conversation_messages(params.conversation_id), {
+				headers: authHeader
+			})
+		]);
+
+		return {
+			conversation: conversation.data,
+			messages: messages.data
+		};
+	} catch (loadError) {
+		const status = isAxiosError(loadError) ? loadError.response?.status : undefined;
+		if (status === 404 || status === 422) error(404, 'Conversation not found');
+		if (status === 401 || status === 403) error(status, 'Your session has expired. Sign in again.');
+		error(503, 'The conversation service is unavailable. Please try again.');
+	}
+};

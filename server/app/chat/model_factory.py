@@ -6,7 +6,7 @@ from langchain_openai import ChatOpenAI
 from pydantic import SecretStr
 
 from app.chat.model import ChatModelConfig, ModelProvider
-from config import config
+from app.core.config import config
 
 
 class ModelFactory:

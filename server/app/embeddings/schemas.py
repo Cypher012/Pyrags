@@ -1,6 +1,7 @@
 from typing import Literal
+from uuid import UUID
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
 
 class JobProgress(BaseModel):
@@ -15,11 +16,4 @@ class JobProgress(BaseModel):
     ]
     message: str
     progress: int
-
-
-class EmbeddingResponse(BaseModel):
-    """Result returned after processing and indexing an uploaded document."""
-
-    status: Literal["success", "error"]
-    message: str
-    chunk_count: int = Field(ge=0)
+    conversation_id: UUID | None = None

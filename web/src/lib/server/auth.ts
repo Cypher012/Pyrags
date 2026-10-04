@@ -1,4 +1,5 @@
 import { env } from '$env/dynamic/private';
+import { env as publicEnv } from '$env/dynamic/public';
 import { betterAuth } from 'better-auth/minimal';
 import { drizzleAdapter } from 'better-auth/adapters/drizzle';
 import { sveltekitCookies } from 'better-auth/svelte-kit';
@@ -7,7 +8,7 @@ import { db } from '$lib/server/db';
 import { jwt } from 'better-auth/plugins';
 
 export const auth = betterAuth({
-	baseURL: env.ORIGIN,
+	baseURL: env.ORIGIN || publicEnv.PUBLIC_ORIGIN,
 	secret: env.BETTER_AUTH_SECRET,
 	database: drizzleAdapter(db, { provider: 'pg' }),
 	socialProviders: {

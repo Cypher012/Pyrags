@@ -1,42 +1,30 @@
-# sv
+# Pyrags Web
 
-Everything you need to build a Svelte project, powered by [`sv`](https://github.com/sveltejs/cli).
+The SvelteKit frontend for Pyrags — document-grounded question answering with cited sources. See the [root README](../README.md) for the full project overview and setup.
 
-## Creating a project
+## Stack
 
-If you're seeing this, you've probably already done this step. Congrats!
+SvelteKit 2 · Svelte 5 (runes) · TypeScript · Tailwind CSS 4 · shadcn-svelte · TanStack Query · Better Auth (Google + GitHub OAuth) · Drizzle ORM · Cloudflare Workers adapter
 
-```sh
-# create a new project
-npx sv create my-app
+## Develop
+
+```bash
+bun install
+cp .env.example .env   # fill in values
+bun run db:start       # Postgres for auth (Docker)
+bun run db:push        # apply the auth schema
+bun run dev
 ```
 
-To recreate this project with the same configuration:
+Requires the FastAPI backend (`../server`) running on `PUBLIC_BASE_URL` (default `http://localhost:8000`).
 
-```sh
-# recreate this project
-bun x sv@0.17.1 create --template minimal --types ts --add prettier eslint tailwindcss="plugins:typography,forms" sveltekit-adapter="adapter:cloudflare+cfTarget:workers" drizzle="database:postgresql+postgresql:postgres.js+docker:yes" better-auth="demo:password,github" --install bun .
-```
+## Scripts
 
-## Developing
-
-Once you've created a project and installed dependencies with `npm install` (or `pnpm install` or `yarn`), start a development server:
-
-```sh
-npm run dev
-
-# or start the server and open the app in a new browser tab
-npm run dev -- --open
-```
-
-## Building
-
-To create a production version of your app:
-
-```sh
-npm run build
-```
-
-You can preview the production build with `npm run preview`.
-
-> To deploy your app, you may need to install an [adapter](https://svelte.dev/docs/kit/adapters) for your target environment.
+| Command                                          | Purpose                              |
+| ------------------------------------------------ | ------------------------------------ |
+| `bun run dev`                                    | Vite dev server                      |
+| `bun run check`                                  | Type + Svelte diagnostics            |
+| `bun run lint`                                   | Prettier check + ESLint              |
+| `bun run format`                                 | Prettier write                       |
+| `bun run db:push` / `db:generate` / `db:migrate` | Drizzle schema workflows             |
+| `bun run build`                                  | Production build (Cloudflare Worker) |

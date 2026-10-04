@@ -7,9 +7,13 @@ export const api = axios.create({
 });
 
 api.interceptors.request.use(async (config) => {
+	if (typeof window === 'undefined') {
+		return config;
+	}
+
 	const { data, error } = await authClient.token();
 
-	if (error || !data.token) {
+	if (error || !data?.token) {
 		throw new Error('Not authenticated');
 	}
 
