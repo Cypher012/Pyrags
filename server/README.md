@@ -12,7 +12,7 @@ uv run alembic upgrade head
 uv run uvicorn main:app --reload
 ```
 
-Set `OPENAI_API_KEY` and keep the `DATABASE_URL` password consistent with `API_DB_PASSWORD`. `DATABASE_URL` is required and must use `postgresql+asyncpg`. The backend database listens on host port `5433`. Apply migrations before calling real or mock database-backed routes.
+Set `OPENAI_API_KEY` and keep the `LOCAL_DATABASE_URL` password consistent with `API_DB_PASSWORD`. With `APP_ENV=development`, only `LOCAL_DATABASE_URL` is required. With `APP_ENV=production`, only `NEON_DATABASE_URL` is required. PostgreSQL URLs are normalized to the `postgresql+asyncpg` driver. Production connections use verified TLS; Neon URL parameters `sslmode` and `channel_binding` are removed because they are not asyncpg connection keywords. The same connection settings apply to Alembic. Use a direct Neon connection for production migrations and a pooled connection for application traffic. The local backend database listens on host port `5433`. Apply migrations before calling real or mock database-backed routes.
 
 Keep `FRONTEND_URL` equal to the frontend's `ORIGIN`; the API fetches its JWKS from that origin. Real upload and conversation routes require a bearer JWT and check ownership. SQL logging follows `DEBUG`, which defaults to `false`.
 

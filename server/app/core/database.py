@@ -8,7 +8,11 @@ from app.auth.current_user import get_current_user
 from app.auth.schemas import TokenUser
 from app.core.config import config
 
-engine = create_async_engine(config.DATABASE_URL, echo=config.DEBUG)
+engine = create_async_engine(
+    config.DATABASE_URL,
+    echo=config.DEBUG,
+    connect_args=config.DATABASE_CONNECT_ARGS,
+)
 async_session = async_sessionmaker(engine, expire_on_commit=False)
 
 
