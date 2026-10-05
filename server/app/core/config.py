@@ -19,6 +19,8 @@ class Settings(BaseSettings):
     MOCK_CHAT_DELAY_SECONDS: float = Field(default=0.75, ge=0)
     LOCAL_DATABASE_URL: str = ""
     NEON_DATABASE_URL: str = ""
+    INNGEST_EVENT_KEY: str = ""
+    INNGEST_SIGNING_KEY: str = ""
 
     @model_validator(mode="after")
     def validate_database_url(self) -> Self:

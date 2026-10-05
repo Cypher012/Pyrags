@@ -404,9 +404,8 @@
 			>A little clarity goes a long way.</span
 		>
 		<div>
-			<a href="#why-pyrags">Why Pyrags</a><a href={resolve('/sign-in')}
-				>Get started <ArrowRight class="size-3.5" /></a
-			>
+			<a href="#why-pyrags">Why Pyrags</a><a href={resolve('/tutorials/inngest')}>Documentation</a
+			><a href={resolve('/sign-in')}>Get started <ArrowRight class="size-3.5" /></a>
 		</div>
 	</footer>
 </main>

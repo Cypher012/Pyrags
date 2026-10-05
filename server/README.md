@@ -18,6 +18,29 @@ Keep `FRONTEND_URL` equal to the frontend's `ORIGIN`; the API fetches its JWKS f
 
 New real uploads store `size_bytes` and `page_count` on each document. PDF page counts include blank pages. DOCX uses the saved `Pages` property when available; this is not a fresh rendered page count. Missing DOCX page metadata stays null. These fields, the upload date, and an extracted preview are returned in the conversation header's `documents` array. Older uploads retain null values because original files are not kept; re-upload them to record their metadata.
 
+## Command shortcuts
+
+Run `make help` from `server/` to list the local-development commands. The default
+`make` command only displays help; it does not start services or run migrations.
+
+For Inngest development, use two terminals in `server/`:
+
+```bash
+make dev       # Terminal 1: FastAPI on http://127.0.0.1:8000
+make inngest   # Terminal 2: Inngest dashboard on http://localhost:8288
+```
+
+In a third terminal, `make inngest-check` requests FastAPI's `/api/inngest`
+diagnostic endpoint. `make sync`, `make db`, and `make migrate` provide the existing
+setup commands; the migration target explicitly selects the development database.
+These shortcuts do not implement or repair your workflow code.
+
+The Inngest command explicitly allows only `inngest-cli` installation scripts,
+as required by npm 12 to download the CLI binary. It uses a separate npm cache at
+`/tmp/pyrags-inngest-npm-cache-approved` to avoid reusing an incomplete installation,
+and reuses that dedicated cache on later runs.
+To force a fresh installation, run `make inngest INNGEST_NPM_CACHE="$(mktemp -d)"`.
+
 ## Frontend mock API
 
 Set `ENABLE_MOCK_API=true` in `server/.env` and start the server with `uv run uvicorn main:app --reload`. Set it to `false` when the mock routes should be unavailable. Mock routes do not require a bearer token. They now use the configured database; the mock query also calls the selected LLM provider and incurs API usage.

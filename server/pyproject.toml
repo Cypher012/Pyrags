@@ -10,6 +10,7 @@ dependencies = [
     "cryptography>=50.0.1",
     "fastapi[standard]>=0.141.1",
     "httpx>=0.28.1",
+    "inngest>=0.5.19",
     "langchain>=1.4.2",
     "langchain-google-genai>=4.4.0",
     "langchain-openai>=1.6.6",

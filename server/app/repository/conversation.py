@@ -60,8 +60,11 @@ async def delete_conversation_for_user(
 ) -> bool:
     result = await session.execute(
         delete(Conversation)
-        .where(col(Conversation.id) == conversation_id, col(Conversation.user_id) == user_id)
-        .returning(Conversation.id)
+        .where(
+            col(Conversation.id) == conversation_id,
+            col(Conversation.user_id) == user_id,
+        )
+        .returning(col(Conversation.id))
     )
     return result.scalar_one_or_none() is not None
 
@@ -104,7 +107,11 @@ async def get_conversation_header(
                 DocumentChunk.content,
                 DocumentChunk.page_number,
             )
-            .where(col(DocumentChunk.document_id).in_([document.id for document in documents]))
+            .where(
+                col(DocumentChunk.document_id).in_(
+                    [document.id for document in documents]
+                )
+            )
             .distinct(col(DocumentChunk.document_id))
             .order_by(col(DocumentChunk.document_id), col(DocumentChunk.chunk_index))
         )
