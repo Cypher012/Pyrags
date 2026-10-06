@@ -144,9 +144,9 @@
 				<Sidebar.MenuItem class="mt-8 px-3">
 					<Sidebar.MenuButton class="px-3 py-6">
 						{#snippet child({ props })}
-							<a href={resolve(item.url)} {...props}>
+							<a href={resolve(item.url)} {...props} aria-label={item.title}>
 								<item.icon />
-								<span>{item.title}</span>
+								<span class="group-data-[collapsible=icon]:hidden">{item.title}</span>
 							</a>
 						{/snippet}
 					</Sidebar.MenuButton>
@@ -154,7 +154,7 @@
 			{/each}
 		</Sidebar.Menu>
 
-		<Collapsible.Root open class="group/collapsible">
+		<Collapsible.Root open class="group/collapsible group-data-[collapsible=icon]:hidden">
 			<Sidebar.Group>
 				<Sidebar.GroupLabel>
 					{#snippet child({ props })}

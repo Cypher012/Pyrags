@@ -16,7 +16,7 @@
 			completedText: 'Ready to ask questions'
 		}
 	];
-	export type DocumentFlow = 'selecting' | 'selected' | 'processing' | 'ready';
+	export type DocumentFlow = 'selecting' | 'selected' | 'processing' | 'ready' | 'failed';
 </script>
 
 <script lang="ts">
@@ -43,7 +43,9 @@
 	const isLocked = $derived(documentFlow === 'processing' || documentFlow === 'ready');
 </script>
 
-<main class="mx-auto flex w-full max-w-5xl flex-1 flex-col items-center pt-40">
+<main
+	class="mx-auto flex w-full max-w-5xl min-w-0 flex-1 flex-col items-center px-4 py-14 sm:px-6 sm:py-12 xl:p-20"
+>
 	<div class="space-y-4">
 		<h2
 			class="text-center font-heading text-3xl font-semibold text-secondary-foreground sm:text-4xl"
@@ -51,12 +53,14 @@
 			Choose what you want to explore
 		</h2>
 		<p class="text-center text-muted-foreground">
-			Add a PDF or DOCX, Prepare it then start asking questions
+			Add up to three PDF or DOCX documents, then explore them in one conversation
 		</p>
 	</div>
 
 	<div
-		class="mt-10 hidden w-full items-start sm:flex {selectingDocuments ? 'max-w-5xl' : 'max-w-3xl'}"
+		class="mt-10 flex w-full flex-col items-center sm:flex-row sm:items-start {selectingDocuments
+			? 'max-w-5xl'
+			: 'max-w-3xl'}"
 		aria-label="Document setup progress"
 	>
 		{#each steps as step, index (step.id)}
@@ -65,12 +69,15 @@
 				(step.id === 2 && documentFlow === 'ready')}
 
 			{@const active =
-				(step.id === 1 && (documentFlow === 'selecting' || documentFlow === 'selected')) ||
+				(step.id === 1 &&
+					(documentFlow === 'selecting' ||
+						documentFlow === 'selected' ||
+						documentFlow === 'failed')) ||
 				(step.id === 2 && documentFlow === 'processing') ||
 				(step.id === 3 && documentFlow === 'ready')}
 
 			<div
-				class="flex min-w-0 items-start gap-2 sm:gap-3"
+				class="flex min-w-0 flex-col items-center gap-3 text-center sm:flex-row sm:items-start sm:text-left"
 				aria-current={active ? 'step' : undefined}
 			>
 				<div
@@ -95,7 +102,7 @@
 						{step.id}. {step.label}
 					</p>
 
-					<p class="mt-0.5 hidden text-xs text-muted-foreground sm:block">
+					<p class="mt-0.5 text-xs text-muted-foreground">
 						{#if step.id === 1}
 							{documentFlow === 'selecting' ? 'Waiting for documents' : step.completedText}
 						{:else if step.id === 2}
@@ -114,7 +121,10 @@
 			{@const isLastStep = index === steps.length - 1}
 
 			{#if !isLastStep}
-				<span class="mx-2 mt-4 h-px min-w-4 flex-1 bg-border"></span>
+				<span
+					aria-hidden="true"
+					class="my-2 h-6 w-px shrink-0 bg-border sm:mx-2 sm:my-0 sm:mt-4 sm:h-px sm:w-auto sm:min-w-4 sm:flex-1"
+				></span>
 			{/if}
 		{/each}
 	</div>
@@ -128,13 +138,14 @@
 		/>
 	</div>
 	{#if !isLocked}
-		<div class="mt-16">
+		<div class="mt-16 w-full max-w-[22rem]">
 			<Button
 				onclick={handleProcessDocument}
-				disabled={documentFlow !== 'selected'}
-				class="h-14 w-[22rem] rounded-xl text-base disabled:cursor-not-allowed disabled:bg-black/20 disabled:text-foreground"
+				disabled={documentFlow !== 'selected' && documentFlow !== 'failed'}
+				class="h-14 w-full rounded-xl text-base disabled:cursor-not-allowed disabled:bg-black/20 disabled:text-foreground"
 			>
-				Process documents <ArrowRight class="ml-3" />
+				{documentFlow === 'failed' ? 'Reprocess all documents' : 'Process documents'}
+				<ArrowRight class="ml-3" />
 			</Button>
 		</div>
 	{/if}

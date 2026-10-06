@@ -13,6 +13,7 @@ from app.chat.service import (
 )
 from app.chat.usage import get_query_usage, refund_query, reserve_query
 from app.core.database import CurrentUserDep, SessionDep
+from app.embeddings.jobs import require_ready_document
 from app.model.conversation import Conversation, ConversationHeader, ConversationUpdate
 from app.model.message import Message, RoleEnum
 from app.model.query_usage import QueryUsageResponse
@@ -54,6 +55,8 @@ async def query_chatbot(
             status_code=404,
             detail="Conversation not found",
         )
+
+    await require_ready_document(session, conversation_id)
 
     messages = await get_messages_for_conversation(
         session=session,

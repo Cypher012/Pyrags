@@ -8,6 +8,7 @@ from app.core.config import config
 from app.core.inngest import inngest_clent
 from app.router import router
 from app.workflows.document_ingestion import process_document
+from app.workflows.dispatch_ingestion import dispatch_ingestion
 
 app = FastAPI(
     title="Pyrags",
@@ -15,7 +16,7 @@ app = FastAPI(
     debug=config.DEBUG,
 )
 
-inngest.fast_api.serve(app, inngest_clent, [process_document])
+inngest.fast_api.serve(app, inngest_clent, [process_document, dispatch_ingestion])
 
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s | %(levelname)s | %(message)s"

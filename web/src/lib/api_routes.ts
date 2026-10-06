@@ -5,6 +5,7 @@ const BASE_URL = env.PUBLIC_BASE_URL || 'http://localhost:8000';
 const API_ROUTES = {
 	query_usage: '/chat/usage',
 	upload_file: `/embeddings/upload-file`,
+	upload_files: `/embeddings/upload-files`,
 	upload_status(jobId: string) {
 		return `${BASE_URL}/embeddings/upload-status/${jobId}`;
 	},

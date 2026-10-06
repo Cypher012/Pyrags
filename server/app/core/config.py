@@ -13,7 +13,7 @@ class Settings(BaseSettings):
     GEMINI_API_KEY: str = ""
     ENABLE_MOCK_API: bool = False
     DEBUG: bool = False
-    MAX_UPLOAD_SIZE_MB: int = Field(default=10, ge=1)
+    MAX_UPLOAD_SIZE_MB: int = Field(default=10, ge=1, le=10)
     MOCK_UPLOAD_DELAY_SECONDS: float = Field(default=0.5, ge=0)
     MOCK_STATUS_DELAY_SECONDS: float = Field(default=1.5, ge=0)
     MOCK_CHAT_DELAY_SECONDS: float = Field(default=0.75, ge=0)
@@ -21,6 +21,15 @@ class Settings(BaseSettings):
     NEON_DATABASE_URL: str = ""
     INNGEST_EVENT_KEY: str = ""
     INNGEST_SIGNING_KEY: str = ""
+
+    @model_validator(mode="after")
+    def validate_inngest_keys(self) -> Self:
+        if self.APP_ENV == "production":
+            if not self.INNGEST_EVENT_KEY.strip():
+                raise ValueError("INNGEST_EVENT_KEY is required in production")
+            if not self.INNGEST_SIGNING_KEY.strip():
+                raise ValueError("INNGEST_SIGNING_KEY is required in production")
+        return self
 
     @model_validator(mode="after")
     def validate_database_url(self) -> Self:

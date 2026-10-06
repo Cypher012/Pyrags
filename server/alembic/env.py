@@ -11,6 +11,7 @@ from app.core.config import config as settings
 from app.model.conversation import Conversation
 from app.model.document import Document
 from app.model.document_chunk import DocumentChunk
+from app.model.ingestion_job import IngestionJob
 from app.model.message import Message
 from app.model.query_usage import DailyQueryUsage
 

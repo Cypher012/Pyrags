@@ -53,32 +53,29 @@ function openDatabase(): Promise<IDBDatabase> {
 	});
 }
 
-export async function saveDocument(file: File): Promise<StoredDocument> {
-	const db = await openDatabase();
-
-	const document: StoredDocument = {
+export async function saveDocuments(files: File[]): Promise<StoredDocument[]> {
+	const documents = files.map((file) => ({
 		id: crypto.randomUUID(),
 		name: file.name,
 		type: getDocumentType(file),
 		size: file.size,
 		file
-	};
-
+	}));
+	const db = await openDatabase();
 	return new Promise((resolve, reject) => {
 		const transaction = db.transaction(STORE_NAME, 'readwrite');
 		const store = transaction.objectStore(STORE_NAME);
-
-		const request = store.add(document);
-
-		request.onsuccess = () => {
-			resolve(document);
-		};
-
-		request.onerror = () => {
-			reject(request.error);
-		};
+		for (const document of documents) store.add(document);
+		transaction.oncomplete = () => { db.close(); resolve(documents); };
+		transaction.onabort = () => { db.close(); reject(transaction.error); };
+		transaction.onerror = () => {};
 	});
 }
+
+export async function saveDocument(file: File): Promise<StoredDocument> {
+	return (await saveDocuments([file]))[0];
+}
+
 
 export async function getDocuments(): Promise<StoredDocument[]> {
 	const db = await openDatabase();

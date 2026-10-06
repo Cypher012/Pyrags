@@ -23,7 +23,7 @@ services:
       - "8000:8000"
     env_file: .env
     environment:
-      DATABASE_URL: postgresql+asyncpg://cipher:${API_DB_PASSWORD}@api-db:5432/pyrags
+      LOCAL_DATABASE_URL: postgresql+asyncpg://cipher:${API_DB_PASSWORD}@api-db:5432/pyrags
       FRONTEND_URL: ${FRONTEND_URL:-http://localhost:5173}
     depends_on:
       api-db:

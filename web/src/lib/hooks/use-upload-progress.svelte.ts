@@ -79,87 +79,108 @@ export function useUploadProgress(callbacks: UploadProgressCallbacks = {}) {
 		const current = new AbortController();
 		controller = current;
 		isTracking = true;
-		let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
+		for (let attempt = 0; attempt <= 5 && !current.signal.aborted; attempt++) {
+			let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
 
-		try {
-			const { data, error } = await authClient.token();
-			if (current.signal.aborted) return;
-			if (error || !data?.token) {
-				fail('You need to be signed in to track processing');
-				return;
-			}
-
-			const response = await fetch(API_ROUTES.upload_status(jobId), {
-				headers: {
-					Authorization: `Bearer ${data.token}`,
-					Accept: 'text/event-stream'
-				},
-				signal: current.signal
-			});
-
-			if (!response.ok || !response.body) {
-				throw new Error(`Status stream failed (${response.status})`);
-			}
-
-			reader = response.body.getReader();
-			const decoder = new TextDecoder();
-			let buffer = '';
-			let eventData: string[] = [];
-			let eventType = '';
-			let terminal = false;
-
-			function readLine(line: string) {
-				if (!line) {
-					if (eventType === 'error') throw new Error('The server reported a processing error');
-					if (eventData.length) {
-						const update = JSON.parse(eventData.join('\n')) as UploadProgress;
-						if (
-							typeof update?.message !== 'string' ||
-							typeof update.stage !== 'string' ||
-							!Number.isFinite(update.progress)
-						) {
-							throw new Error('Invalid processing update');
-						}
-						terminal = handleEvent(update);
-					}
-					eventData = [];
-					eventType = '';
+			try {
+				const { data, error } = await authClient.token();
+				if (current.signal.aborted) return;
+				if (error || !data?.token) {
+					fail('You need to be signed in to track processing');
 					return;
 				}
-				const separator = line.indexOf(':');
-				const field = separator === -1 ? line : line.slice(0, separator);
-				let value = separator === -1 ? '' : line.slice(separator + 1);
-				if (value.startsWith(' ')) value = value.slice(1);
-				if (field === 'data') eventData.push(value);
-				if (field === 'event') eventType = value;
-			}
 
-			while (true) {
-				const { value, done } = await reader.read();
-				buffer += done ? decoder.decode() : decoder.decode(value, { stream: true });
-				while (!terminal) {
-					const lineEnd = buffer.search(/[\r\n]/);
-					if (lineEnd === -1) break;
-					if (!done && buffer[lineEnd] === '\r' && lineEnd === buffer.length - 1) break;
-					const separatorLength = buffer.slice(lineEnd, lineEnd + 2) === '\r\n' ? 2 : 1;
-					readLine(buffer.slice(0, lineEnd));
-					buffer = buffer.slice(lineEnd + separatorLength);
+				const response = await fetch(API_ROUTES.upload_status(jobId), {
+					headers: {
+						Authorization: `Bearer ${data.token}`,
+						Accept: 'text/event-stream'
+					},
+					signal: current.signal
+				});
+
+				if ([401, 403, 404].includes(response.status)) {
+					fail(response.status === 404 ? 'Processing job is no longer available' : 'Sign in again to track processing');
+					return;
 				}
-				if (terminal) return;
-				if (done) throw new Error('Processing stream ended before completion');
-			}
-		} catch (trackingError) {
-			if (current.signal.aborted) return;
+				if (!response.ok || !response.body) {
+					throw new Error(`Status stream failed (${response.status})`);
+				}
 
-			console.error('Upload progress tracking failed:', trackingError);
-			fail('Connection interrupted while tracking processing');
-		} finally {
-			if (reader) {
-				await reader.cancel().catch(() => {});
-				reader.releaseLock();
+				reader = response.body.getReader();
+				const decoder = new TextDecoder();
+				let buffer = '';
+				let eventData: string[] = [];
+				let eventType = '';
+				let terminal = false;
+
+				function readLine(line: string) {
+					if (!line) {
+						if (eventType === 'error') throw new Error('The server reported a processing error');
+						if (eventData.length) {
+							const update = JSON.parse(eventData.join('\n')) as UploadProgress;
+							if (
+								typeof update?.message !== 'string' ||
+								typeof update.stage !== 'string' ||
+								!Number.isFinite(update.progress)
+							) {
+								throw new Error('Invalid processing update');
+							}
+							terminal = handleEvent(update);
+						}
+						eventData = [];
+						eventType = '';
+						return;
+					}
+					const separator = line.indexOf(':');
+					const field = separator === -1 ? line : line.slice(0, separator);
+					let value = separator === -1 ? '' : line.slice(separator + 1);
+					if (value.startsWith(' ')) value = value.slice(1);
+					if (field === 'data') eventData.push(value);
+					if (field === 'event') eventType = value;
+				}
+
+				while (true) {
+					const { value, done } = await reader.read();
+					if (current.signal.aborted) return;
+					buffer += done ? decoder.decode() : decoder.decode(value, { stream: true });
+					while (!terminal) {
+						const lineEnd = buffer.search(/[\r\n]/);
+						if (lineEnd === -1) break;
+						if (!done && buffer[lineEnd] === '\r' && lineEnd === buffer.length - 1) break;
+						const separatorLength = buffer.slice(lineEnd, lineEnd + 2) === '\r\n' ? 2 : 1;
+						readLine(buffer.slice(0, lineEnd));
+						buffer = buffer.slice(lineEnd + separatorLength);
+					}
+					if (terminal) return;
+					if (done) throw new Error('Processing stream ended before completion');
+				}
+			} catch (trackingError) {
+				if (current.signal.aborted) return;
+
+				console.error('Upload progress tracking failed:', trackingError);
+				if (attempt === 5) {
+					fail('Connection interrupted. Your document may still be processing; check Recents.');
+					return;
+				}
+				message = 'Reconnecting to document processing';
+				await new Promise<void>((resolve) => {
+					const finish = () => {
+						clearTimeout(timer);
+						current.signal.removeEventListener('abort', finish);
+						resolve();
+					};
+					const timer = setTimeout(finish, Math.min(1000 * 2 ** attempt, 10000));
+					current.signal.addEventListener('abort', finish, { once: true });
+					if (current.signal.aborted) finish();
+				});
+			} finally {
+				if (reader) {
+					await reader.cancel().catch(() => {});
+					reader.releaseLock();
+				}
 			}
-			if (controller === current) stopTracking();
 		}
+		if (controller === current) stopTracking();
 	}
 
 	return {

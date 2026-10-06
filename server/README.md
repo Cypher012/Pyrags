@@ -9,7 +9,7 @@ cp .env.example .env
 uv sync --locked
 docker compose up -d api-db
 uv run alembic upgrade head
-uv run uvicorn main:app --reload
+make dev
 ```
 
 Set `OPENAI_API_KEY` and keep the `LOCAL_DATABASE_URL` password consistent with `API_DB_PASSWORD`. With `APP_ENV=development`, only `LOCAL_DATABASE_URL` is required. With `APP_ENV=production`, only `NEON_DATABASE_URL` is required. PostgreSQL URLs are normalized to the `postgresql+asyncpg` driver. Production connections use verified TLS; Neon URL parameters `sslmode` and `channel_binding` are removed because they are not asyncpg connection keywords. The same connection settings apply to Alembic. Use a direct Neon connection for production migrations and a pooled connection for application traffic. The local backend database listens on host port `5433`. Apply migrations before calling real or mock database-backed routes.
@@ -33,7 +33,61 @@ make inngest   # Terminal 2: Inngest dashboard on http://localhost:8288
 In a third terminal, `make inngest-check` requests FastAPI's `/api/inngest`
 diagnostic endpoint. `make sync`, `make db`, and `make migrate` provide the existing
 setup commands; the migration target explicitly selects the development database.
-These shortcuts do not implement or repair your workflow code.
+The API registers the document workflow and its pending-event recovery schedule.
+
+## Durable ingestion
+
+Real uploads now use PostgreSQL and Inngest, not an in-memory queue. Select one to
+three PDF/DOCX documents, each strictly smaller than 10 MiB (10 × 1024 × 1024
+bytes). The frontend adds selections rather than replacing them and shows each
+document's progress independently. All documents must succeed before chat opens.
+
+`POST /embeddings/upload-files` accepts repeated multipart `files` fields and
+returns `{conversation_id, jobs: [{job_id, document_id, filename}]}` in upload
+order. All files are validated and extracted before one transaction creates the
+shared conversation, documents and jobs. An invalid file rejects the whole batch
+without partial records. The original `/embeddings/upload-file` endpoint remains
+compatible with its multipart `file` field and `{job_id, filename}` response.
+
+Each document uses its own Inngest run and status stream. If any document fails,
+chat remains blocked without reserving query usage. After every job has finished,
+users can edit the selection and reprocess the entire batch into a new conversation;
+this can incur embedding charges again. Connection interruptions instead offer
+reconnecting to the saved jobs, without re-uploading. Adding files to an existing
+conversation is not included. Use the real API for this batch flow; the optional
+mock upload still models a single-file upload.
+
+The upload
+request validates and extracts the PDF/DOCX, then commits a conversation, a
+PROCESSING document and an `ingestion_jobs` row containing the extracted text.
+Original files are not retained. Inngest prepares chunks, embeds and stores them
+in batches of 32, and marks the document READY only after all chunks are stored.
+Successful batches are reused on retry; a provider call interrupted before its
+database commit can still be billed again. Exhausted retries mark the document
+FAILED. Chat requires every document to be READY without charging daily query usage
+for rejected requests.
+
+Status SSE reads owner-scoped PostgreSQL snapshots. Reconnecting returns the
+latest state, including completion; multiple API instances can observe the same
+job. The frontend retries interrupted streams with a refreshed auth token.
+
+If event delivery fails after upload persistence, the API still returns the saved
+job ID. The `dispatch-pending-documents` Inngest schedule retries unsent jobs every
+minute, using a stable event ID and recording `dispatched_at` after delivery.
+Register both functions so recovery runs independently of upload events. This is
+at-least-once delivery, not exactly-once embedding billing. No Redis is needed.
+
+Local setup: `make db`, `make migrate`, then run `make dev` and `make inngest` in
+separate terminals. Start SvelteKit with `bun run dev` in `web/`. Use the real API
+with `ENABLE_MOCK_API=false`; upload a small document and inspect the workflow at
+http://localhost:8288. This makes a real embedding API call.
+
+Production: configure `APP_ENV=production`, `NEON_DATABASE_URL` for `pyrags_app`,
+`FRONTEND_URL`, `OPENAI_API_KEY`, `INNGEST_EVENT_KEY`, and `INNGEST_SIGNING_KEY` on
+the Python host. Keep `ENABLE_MOCK_API=false` and unset `INNGEST_DEV`. Apply
+`APP_ENV=production uv run alembic upgrade head`, then sync the public HTTPS
+`/api/inngest` endpoint in Inngest Cloud. Both functions must appear. Cloudflare
+only hosts the frontend; Python still executes the workflow on your API host.
 
 The Inngest command explicitly allows only `inngest-cli` installation scripts,
 as required by npm 12 to download the CLI binary. It uses a separate npm cache at

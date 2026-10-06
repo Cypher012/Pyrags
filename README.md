@@ -19,7 +19,7 @@ The system is a SvelteKit frontend backed by a FastAPI service. Documents are pr
 
 **Document ingestion**
 
-- PDF and DOCX upload, staged in the browser (IndexedDB) until explicitly confirmed
+- One to three PDF/DOCX files per conversation, each smaller than 10 MiB, staged in IndexedDB until explicitly confirmed
 - Background processing job with per-stage progress streamed over Server-Sent Events (`upload → extracting → chunking → embedding → storing → completed`)
 - Per-page PDF extraction with preserved page numbers (pypdf); paragraph-level DOCX extraction (python-docx)
 - Recursive chunking (1000 chars / 200 overlap) with citation metadata captured at chunk time
@@ -47,11 +47,11 @@ The system is a SvelteKit frontend backed by a FastAPI service. Documents are pr
 
 ## How It Works
 
-1. **Select** — the user drops a PDF/DOCX into the app. The file is validated and staged in IndexedDB; nothing is uploaded yet.
-2. **Confirm** — _Process documents_ uploads the file to `POST /embeddings/upload-file`. The backend validates it, allocates a `job_id` and a progress queue, starts a background task, and returns immediately.
+1. **Select** — the user selects up to three PDF/DOCX files, each smaller than 10 MiB. Files are validated and staged in IndexedDB; nothing is uploaded yet.
+2. **Confirm** — _Process documents_ sends the files to `POST /embeddings/upload-files`. The backend validates and extracts the entire batch, commits one conversation with its documents and recoverable jobs to PostgreSQL, then sends an Inngest event for each job.
 3. **Track** — the frontend follows `GET /embeddings/upload-status/{job_id}` (SSE consumed over `fetch`, so the Bearer token can be attached) and renders live progress.
 4. **Process** — the job extracts text, builds metadata-aware chunks, embeds them, and writes the conversation, document, and chunks transactionally. The final SSE event carries the new `conversation_id`.
-5. **Chat** — the frontend redirects to `/app/chat/{conversation_id}`. Each question is embedded, matched against the conversation's chunks by cosine distance (top 5), and answered by the model with the retrieved passages as context — then the answer and its sources are persisted.
+5. **Chat** — once every document is READY, the frontend redirects to `/app/chat/{conversation_id}`. Each question is embedded, matched across the conversation's documents by cosine distance (top 5), and answered with retrieved passages as context — then the answer and sources are persisted. A failed document blocks chat until the user reprocesses the full selection into a new conversation.
 
 ```mermaid
 sequenceDiagram
@@ -188,7 +188,8 @@ docker compose up -d api-db     # Postgres 17 + pgvector on localhost:5433
 cp .env.example .env            # set OPENAI_API_KEY, API_DB_PASSWORD, DATABASE_URL
 uv sync
 uv run alembic upgrade head
-uv run uvicorn main:app --reload
+make dev                       # FastAPI in local Inngest mode
+# In another server/ terminal: make inngest
 ```
 
 `DATABASE_URL` for local development:
@@ -262,16 +263,16 @@ Pyrags is **v1 in active development**. The core loop is complete end to end: au
 
 ### Roadmap
 
-- **Multiple documents per conversation** — the schema supports it; uploads currently create a new conversation each time
+- **Add documents to an existing conversation** — initial uploads already support up to three documents together
 - **AI-generated conversation titles** (today the title is the filename)
-- **Durable job queue** for ingestion (jobs are in-process; fine for a single instance, not for multi-replica deployments)
+- **Durable ingestion** is implemented with Inngest and persisted PostgreSQL jobs; see `server/README.md` for local and production setup.
 - **Automated tests and CI**
 - **Hosted deployment guide** — the API Dockerfile and Cloudflare Worker config already exist
 
 ## Known Limitations
 
-- Upload job state (queues, SSE streams) is in-memory: a restart drops in-flight jobs, and horizontal scaling requires an external queue.
-- One document per conversation; replacing it means starting a new conversation.
+- Original file extraction happens in the upload request; only extracted text is retained for durable processing. Interrupted embedding calls can be billed again before their vectors commit.
+- Up to three documents per new conversation; every document must process successfully before chat is available. Reprocessing a batch creates a new conversation.
 - DOCX citations have no page numbers (paragraph extraction does not preserve rendered page layout).
 - The daily query budget is currently fixed in code (6 per day, resetting at midnight Africa/Lagos), with a single unlimited-account override.
 - The model picker in the UI exposes OpenAI models; Gemini is available through the API.

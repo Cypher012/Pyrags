@@ -15,7 +15,7 @@
 	const conversations = $derived(data.conversations);
 </script>
 
-<Sidebar.Provider>
+<Sidebar.Provider class="[--sidebar-width:16rem]! lg:[--sidebar-width:18rem]! xl:[--sidebar-width:20rem]! 2xl:[--sidebar-width:22rem]!">
 	<AppSidebar {user} {conversations} />
 	<Sidebar.Inset>
 		<div class="flex flex-1 flex-col gap-4">

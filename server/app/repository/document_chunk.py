@@ -3,7 +3,7 @@ from uuid import UUID
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import col, select
 
-from app.model.document import Document
+from app.model.document import Document, DocumentStatus
 from app.model.document_chunk import DocumentChunk
 
 type RetrievedChunk = tuple[DocumentChunk, Document]
@@ -35,6 +35,7 @@ async def search_document_chunks(
         )
         .where(
             col(Document.conversation_id) == conversation_id,
+            col(Document.status) == DocumentStatus.READY,
         )
         .order_by(cosine_distance)
         .limit(limit)
