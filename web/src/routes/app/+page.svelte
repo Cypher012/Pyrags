@@ -23,6 +23,7 @@
 	import Button from '$lib/components/ui/button/button.svelte';
 	import { ArrowRight, Check } from '@lucide/svelte';
 	import FileUpload from './file-upload.svelte';
+	import { Trigger as SidebarTrigger } from '$lib/components/ui/sidebar';
 
 	let documentFlow = $state<DocumentFlow>('selecting');
 
@@ -44,8 +45,9 @@
 </script>
 
 <main
-	class="mx-auto flex w-full max-w-5xl min-w-0 flex-1 flex-col items-center px-4 py-14 sm:px-6 sm:py-12 xl:p-20"
+	class="relative mx-auto flex w-full max-w-5xl min-w-0 flex-1 flex-col items-center px-4 py-14 sm:px-6 sm:py-12 xl:p-20"
 >
+	<SidebarTrigger class="absolute top-2 left-4 size-10 md:hidden" />
 	<div class="space-y-4">
 		<h2
 			class="text-center font-heading text-3xl font-semibold text-secondary-foreground sm:text-4xl"
