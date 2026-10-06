@@ -122,7 +122,7 @@
 			class="group/logo relative flex h-10 w-full items-center group-data-[collapsible=icon]:size-8"
 		>
 			<BrandLogo
-				class="h-auto w-40 max-w-[calc(100%-2.5rem)] group-data-[collapsible=icon]:hidden"
+				class="h-auto w-32 max-w-[calc(100%-2.5rem)] group-data-[collapsible=icon]:hidden"
 			/>
 			<button
 				type="button"
