@@ -1,6 +1,5 @@
 import { redirect } from '@sveltejs/kit';
 import type { LayoutServerLoad } from './$types';
-import { auth } from '$lib/server/auth';
 import { api } from '$lib/api';
 import API_ROUTES from '$lib/api_routes';
 import type { Conversation } from '$lib/types/conversation';
@@ -13,12 +12,12 @@ export const load: LayoutServerLoad = async ({ locals, request, depends }) => {
 		redirect(302, '/sign-in');
 	}
 
-	const conversations = await getConversations(request.headers);
+	const conversations = await getConversations(locals.auth, request.headers);
 
 	return { user, conversations };
 };
 
-async function getConversations(headers: Headers): Promise<Conversation[]> {
+async function getConversations(auth: App.Locals['auth'], headers: Headers): Promise<Conversation[]> {
 	try {
 		const { token } = await auth.api.getToken({ headers });
 

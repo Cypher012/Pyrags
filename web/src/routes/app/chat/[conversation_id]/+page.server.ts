@@ -2,16 +2,15 @@ import { error } from '@sveltejs/kit';
 import type { PageServerLoad } from './$types';
 import { api } from '$lib/api';
 import API_ROUTES from '$lib/api_routes';
-import { auth } from '$lib/server/auth';
 import type { ConversationHeader } from '$lib/types/conversation';
 import type { Message } from '$lib/types/message';
 import { isAxiosError } from 'axios';
 
-export const load: PageServerLoad = async ({ params, request, parent }) => {
+export const load: PageServerLoad = async ({ params, request, parent, locals }) => {
 	await parent();
 
 	try {
-		const { token } = await auth.api.getToken({ headers: request.headers });
+		const { token } = await locals.auth.api.getToken({ headers: request.headers });
 		const authHeader = { Authorization: `Bearer ${token}` };
 		const [conversation, messages] = await Promise.all([
 			api.get<ConversationHeader>(API_ROUTES.conversation(params.conversation_id), {

@@ -4,11 +4,11 @@ import { betterAuth } from 'better-auth/minimal';
 import { drizzleAdapter } from 'better-auth/adapters/drizzle';
 import { sveltekitCookies } from 'better-auth/svelte-kit';
 import { getRequestEvent } from '$app/server';
-import { db } from '$lib/server/db';
+import type { AuthDatabase } from '$lib/server/db';
 import { jwt } from 'better-auth/plugins';
 import { authLogger } from './auth-logger';
 
-export const auth = betterAuth({
+export const createAuth = (db: AuthDatabase) => betterAuth({
 	logger: authLogger,
 	baseURL: env.ORIGIN || publicEnv.PUBLIC_ORIGIN,
 	secret: env.BETTER_AUTH_SECRET,
