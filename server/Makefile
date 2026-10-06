@@ -1,13 +1,14 @@
 .DEFAULT_GOAL := help
 INNGEST_NPM_CACHE ?= /tmp/pyrags-inngest-npm-cache-approved
 
-.PHONY: help sync db migrate dev inngest inngest-check
+.PHONY: help sync db migrate migrate-prod dev inngest inngest-check
 
 help:
 	@printf '%s\n' \
 		'make sync           Install dependencies from uv.lock' \
 		'make db             Start the local PostgreSQL service' \
 		'make migrate        Apply migrations to the development database' \
+		'make migrate-prod   Apply migrations to the production database' \
 		'make dev            Start FastAPI in local Inngest mode' \
 		'make inngest        Start the Inngest Dev Server in another terminal' \
 		'make inngest-check  Inspect the FastAPI Inngest endpoint'
@@ -20,6 +21,9 @@ db:
 
 migrate:
 	APP_ENV=development uv run alembic upgrade head
+
+migrate-prod:
+	APP_ENV=production uv run alembic upgrade head
 
 dev:
 	APP_ENV=development INNGEST_DEV=1 uv run uvicorn main:app --reload --host 127.0.0.1 --port 8000
