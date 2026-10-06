@@ -6,8 +6,10 @@ import { sveltekitCookies } from 'better-auth/svelte-kit';
 import { getRequestEvent } from '$app/server';
 import { db } from '$lib/server/db';
 import { jwt } from 'better-auth/plugins';
+import { authLogger } from './auth-logger';
 
 export const auth = betterAuth({
+	logger: authLogger,
 	baseURL: env.ORIGIN || publicEnv.PUBLIC_ORIGIN,
 	secret: env.BETTER_AUTH_SECRET,
 	database: drizzleAdapter(db, { provider: 'pg' }),
